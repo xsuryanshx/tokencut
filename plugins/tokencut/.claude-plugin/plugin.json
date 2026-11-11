@@ -1,0 +1,9 @@
+{
+  "name": "tokencut",
+  "displayName": "TokenCut",
+  "version": "0.1.0",
+  "description": "Spotify-Portal-style token saver: route bulk file reads and boilerplate code-writing to a cheap worker model (Haiku or Gemini Flash) so they never fill the main context",
+  "author": { "name": "Suryansh Rawat" },
+  "license": "MIT",
+  "keywords": ["tokens", "cost", "context", "hooks", "haiku", "gemini"]
+}

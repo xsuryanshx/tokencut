@@ -1,0 +1,17 @@
+{
+  "description": "Block whole-file reads of large files and route them to a cheap worker model",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.py\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

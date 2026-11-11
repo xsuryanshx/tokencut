@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""Have a cheap model read files (or piped output) and return only the answer to a question.
+
+  bulk-read -q "Where is retry logic configured?" src/a.java src/b.java
+  bulk-read -q "How does auth work?" src/auth/
+  npm test 2>&1 | bulk-read -q "Which tests failed and why?" --stdin
+"""
+import argparse
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
+import tokencut as tc  # noqa: E402
+
+SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build",
+             "target", ".next", ".idea", ".gradle", "vendor"}
+
+SYSTEM = """You are a precise code-analysis worker serving another AI agent that cannot see these files.
+You get files wrapped in <file path="..."> tags (each line prefixed with its line number) and one question.
+
+Rules:
+- Answer ONLY the question. Structured bullets only, no preamble, no closing summary.
+- Cite every claim as path:line or path:start-end so the agent can jump straight there.
+- Quote code only when the exact text matters, at most ~15 lines per quote.
+- Be complete on what was asked (list every relevant location), terse on everything else.
+- If the content does not answer the question, say so plainly and name what to look at instead."""
+
+
+def collect(paths):
+    files = []
+    for p in paths:
+        if os.path.isdir(p):
+            for root, dirs, names in os.walk(p):
+                dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS and not d.startswith("."))
+                for n in sorted(names):
+                    fp = os.path.join(root, n)
+                    if not tc.is_binary(fp):
+                        files.append(fp)
+        elif os.path.isfile(p):
+            files.append(p)
+        else:
+            tc.die(f"no such file or directory: {p}")
+    return files
+
+
+def numbered(text):
+    return "\n".join(f"{i}\t{line}" for i, line in enumerate(text.splitlines(), 1))
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("-q", "--question", required=True)
+    ap.add_argument("--stdin", action="store_true", help="read content from stdin (logs, command output)")
+    ap.add_argument("--model", help="override worker model (e.g. sonnet for harder questions)")
+    ap.add_argument("--paths", nargs="*", default=[], help=argparse.SUPPRESS)  # Spotify-style alias
+    ap.add_argument("files", nargs="*")
+    args = ap.parse_args()
+
+    parts = []
+    paths = args.files + args.paths
+    if args.stdin:
+        parts.append(f'<file path="stdin">\n{numbered(sys.stdin.read())}\n</file>')
+    files = collect(paths)
+    for fp in files:
+        with open(fp, encoding="utf-8", errors="replace") as f:
+            parts.append(f'<file path="{fp}">\n{numbered(f.read())}\n</file>')
+    if not parts:
+        tc.die("give at least one file/dir, or --stdin")
+
+    user = "\n\n".join(parts) + f"\n\n<question>\n{args.question}\n</question>"
+    try:
+        answer, meta = tc.run_worker(SYSTEM, user, model=args.model)
+    except (tc.WorkerError, OSError) as e:
+        tc.die(f"{e}\nFall back to Grep + Read with offset/limit.")
+    except Exception as e:  # e.g. timeout
+        tc.die(f"worker failed ({type(e).__name__}: {e}). Fall back to Grep + Read with offset/limit.")
+
+    tc.log({"tool": "bulk-read", "files": len(files) + (1 if args.stdin else 0),
+            "input_chars": len(user), "output_chars": len(answer), **meta})
+    print(answer)
+
+
+if __name__ == "__main__":
+    main()

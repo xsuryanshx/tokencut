@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Have a cheap model write predictable code (tests, configs, stubs, boilerplate) straight to disk.
+
+The generated code is NOT printed, so it never enters the main agent's context.
+Verify it by running tests/linters, and Read only the regions that fail.
+
+  code-write --spec "Unit tests for the cache eviction path" \
+             --reference src/test/CacheTest.java --reference src/Cache.java \
+             --target src/test/CacheEvictionTest.java
+"""
+import argparse
+import os
+import re
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
+import tokencut as tc  # noqa: E402
+
+SYSTEM = """You are a code-writing worker. You write one file that will be saved to disk verbatim.
+You get a spec, the target path, and reference files in <file path="..."> tags.
+
+Rules:
+- Match the reference files exactly: language, framework, imports, naming, formatting, test style.
+- Output ONLY the complete file contents. No explanations, no markdown fences, no commentary.
+- Do not invent APIs. Use only functions/classes visible in the references or the language's standard library.
+- If something is ambiguous, pick the most conventional option for this codebase and leave a short TODO comment."""
+
+FENCE = re.compile(r"^\s*```[\w.+-]*\s*\n(.*?)\n```\s*$", re.S)
+
+
+def strip_fences(text):
+    m = FENCE.match(text)
+    return m.group(1) if m else text
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--spec", required=True, help="what to write; be specific (cases, names, edge cases)")
+    ap.add_argument("--target", required=True, help="file to create")
+    ap.add_argument("--reference", action="append", default=[], help="file to imitate / code under test (repeatable)")
+    ap.add_argument("--force", action="store_true", help="overwrite target if it exists")
+    ap.add_argument("--model", help="override worker model (e.g. sonnet for trickier code)")
+    args = ap.parse_args()
+
+    if os.path.exists(args.target) and not args.force:
+        tc.die(f"{args.target} exists; pass --force to overwrite (or write to a new file)")
+
+    parts = []
+    for ref in args.reference:
+        if not os.path.isfile(ref):
+            tc.die(f"reference not found: {ref}")
+        with open(ref, encoding="utf-8", errors="replace") as f:
+            parts.append(f'<file path="{ref}">\n{f.read()}\n</file>')
+    user = "\n\n".join(parts) + f"\n\n<target>{args.target}</target>\n\n<spec>\n{args.spec}\n</spec>"
+
+    try:
+        code, meta = tc.run_worker(SYSTEM, user, model=args.model)
+    except Exception as e:
+        tc.die(f"worker failed ({e}). Write the file yourself instead.")
+    code = strip_fences(code)
+    if not code.strip():
+        tc.die("worker returned empty output. Write the file yourself instead.")
+
+    os.makedirs(os.path.dirname(os.path.abspath(args.target)), exist_ok=True)
+    with open(args.target, "w") as f:
+        f.write(code if code.endswith("\n") else code + "\n")
+
+    lines = code.count("\n") + 1
+    tc.log({"tool": "code-write", "target": args.target, "input_chars": len(user),
+            "output_chars": len(code), **meta})
+    print(f"code-write: wrote {args.target} ({lines} lines, backend={meta['backend']}). "
+          "Contents not shown to save tokens: run the tests/linter now and Read only what fails.")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,14 @@
+{
+  "name": "tokencut-marketplace",
+  "description": "Token-saving plugins for Claude Code",
+  "owner": {
+    "name": "Suryansh Rawat"
+  },
+  "plugins": [
+    {
+      "name": "tokencut",
+      "source": "./plugins/tokencut",
+      "description": "Route bulk file reads and boilerplate code-writing to a cheap worker model to cut main-model token usage"
+    }
+  ]
+}

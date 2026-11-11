@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""Summarize tokencut activity: delegated reads/writes, estimated tokens kept out of the main context."""
+import json
+import os
+import sys
+from collections import Counter
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
+import tokencut as tc  # noqa: E402
+
+
+def main():
+    if not os.path.exists(tc.LOG_PATH):
+        print("tokencut: no activity logged yet.")
+        return
+    calls, events = Counter(), Counter()
+    in_chars = out_chars = 0
+    cost = 0.0
+    with open(tc.LOG_PATH) as f:
+        for line in f:
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            tool = e.get("tool")
+            if tool in ("bulk-read", "code-write"):
+                calls[tool] += 1
+                in_chars += e.get("input_chars", 0)
+                out_chars += e.get("output_chars", 0) if tool == "bulk-read" else 0
+                cost += e.get("worker_cost_usd") or 0
+            elif tool == "hook":
+                events[e.get("action")] += 1
+
+    saved = max(in_chars - out_chars, 0) // tc.CHARS_PER_TOKEN
+    print(f"log: {tc.LOG_PATH}")
+    print(f"bulk-read calls:   {calls['bulk-read']}")
+    print(f"code-write calls:  {calls['code-write']}")
+    print(f"hook blocks:       {events['deny']} (overridden on retry: {events['override']})")
+    print(f"content delegated: {in_chars:,} chars (~{in_chars // tc.CHARS_PER_TOKEN:,} tokens)")
+    print(f"est. main-context tokens avoided: ~{saved:,} (per turn they would have stayed in context)")
+    if cost:
+        print(f"worker cost (haiku, list price): ${cost:.4f}")
+
+
+if __name__ == "__main__":
+    main()
